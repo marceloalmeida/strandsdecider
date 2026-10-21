@@ -1,0 +1,32 @@
+# docker-compose.override.yml
+# Copy to docker-compose.override.yml for local development overrides
+# This file is ignored by git (see .gitignore)
+
+version: "3.8"
+
+services:
+  strandsdecider:
+    # Override for local development with live reload
+    # build:
+    #   context: .
+    #   target: dev
+    # volumes:
+    #   - ./serve_ipex.py:/app/serve_ipex.py:ro
+    # environment:
+    #   - MODEL_ID=StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+    #   - STRANDS_ARGS=--port 8000 --host 0.0.0.0
+    # ports:
+    #   - "8000:8000"
+    # command: serve ${MODEL_ID} ${STRANDS_ARGS}
+
+  # Uncomment to run IPEX-optimized locally
+  # strandsdecider-ipex:
+  #   profiles: [ipex]
+
+  # Uncomment to run IPEX + quantization locally
+  # strandsdecider-ipex-quant:
+  #   profiles: [ipex-quant]
+
+  # Uncomment to run CUDA variant locally
+  # strandsdecider-cuda:
+  #   profiles: [cuda]

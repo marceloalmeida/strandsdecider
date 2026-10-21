@@ -1,0 +1,139 @@
+services:
+  strandsdecider:
+    build:
+      context: .
+      # Uncomment to install optional extras, e.g.:
+      # args:
+      #   STRANDS_DECIDER_EXTRAS: "[vision]"
+      #   STRANDS_DECIDER_GIT: "1"
+      #   INSTALL_BITSANDBYTES: "1"       # enables --load-in-8bit / --load-in-4bit
+      #   INSTALL_IPEX: "1"               # enables IPEX CPU optimizations
+      #   INSTALL_IPEX_QUANT: "1"         # enables IPEX CPU quantization (requires INSTALL_IPEX=1)
+    image: strandsdecider:latest
+    container_name: strandsdecider
+    environment:
+      # HF_HOME points at a directory backed by the hf_cache named volume
+      # below, so downloaded Hugging Face checkpoints persist across
+      # container restarts (and are not re-downloaded every time).
+      HF_HOME: /root/.cache/huggingface
+      # Model to serve. Override via .env or `docker compose -e MODEL_ID=...`.
+      MODEL_ID: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+      # Extra CLI flags appended after the model id, e.g. "--vision", "--port 8080",
+      # "--load-in-8bit" or "--load-in-4bit" (requires INSTALL_BITSANDBYTES=1 build),
+      # "--ipex-quantize=int8_static|int8_dynamic" (requires INSTALL_IPEX_QUANT=1 build).
+      STRANDS_ARGS: --port 8000 --host 0.0.0.0
+    # Compose substitutes ${VAR} from the host env/.env (not the container's
+    # environment block), so fall back to the defaults above with :-.
+    command: serve ${MODEL_ID:-StrandsAgents/strands-decider-2B-qwen3.5-v1-2610} ${STRANDS_ARGS:---port 8000 --host 0.0.0.0}
+    ports:
+      - "8000:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    healthcheck:
+      # Probe the listen port directly; the /v1/systemone endpoint requires a
+      # valid POST body, so a socket check is the simplest liveness signal.
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('127.0.0.1', 8000), 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # IPEX CPU variant with quantization (INT8 static/dynamic). Only started with
+  # `docker compose --profile ipex-quant up`. Uses port 8002.
+  strandsdecider-ipex-quant:
+    build:
+      context: .
+      args:
+        INSTALL_IPEX: "1"
+        INSTALL_IPEX_QUANT: "1"
+    image: strandsdecider:ipex-quant
+    container_name: strandsdecider-ipex-quant
+    profiles:
+      - ipex-quant
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      MODEL_ID: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+      # IPEX/quantization flags passed to custom entrypoint
+      IPEX_OPTIMIZE: "1"
+      IPEX_QUANTIZE: "int8_dynamic"
+    # Use custom entrypoint that applies IPEX/quantization at model load time
+    entrypoint: ["python3", "/app/serve_ipex.py"]
+    command:
+      - ${MODEL_ID:-StrandsAgents/strands-decider-2B-qwen3.5-v1-2610}
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "--ipex-optimize"
+      - "--ipex-quantize"
+      - ${IPEX_QUANTIZE:-int8_dynamic}
+    ports:
+      - "8002:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    restart: unless-stopped
+
+  # IPEX CPU variant (optimizations only, no quantization). Only started with
+  # `docker compose --profile ipex up`. Uses port 8003.
+  strandsdecider-ipex:
+    build:
+      context: .
+      args:
+        INSTALL_IPEX: "1"
+    image: strandsdecider:ipex
+    container_name: strandsdecider-ipex
+    profiles:
+      - ipex
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      MODEL_ID: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+      IPEX_OPTIMIZE: "1"
+    entrypoint: ["python3", "/app/serve_ipex.py"]
+    command:
+      - ${MODEL_ID:-StrandsAgents/strands-decider-2B-qwen3.5-v1-2610}
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "--ipex-optimize"
+    ports:
+      - "8003:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    restart: unless-stopped
+
+  # GPU variant: builds from Dockerfile.cuda. Only started with
+  # `docker compose --profile cuda up`. Requires an NVIDIA GPU and the
+  # NVIDIA Container Toolkit on the host. Uses port 8001 to avoid clashing
+  # with the default CPU service; change to 8000 if you run them exclusively.
+  strandsdecider-cuda:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    image: strandsdecider:cuda
+    container_name: strandsdecider-cuda
+    profiles:
+      - cuda
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      MODEL_ID: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+      STRANDS_ARGS: --port 8000 --host 0.0.0.0
+    command: serve ${MODEL_ID:-StrandsAgents/strands-decider-2B-qwen3.5-v1-2610} ${STRANDS_ARGS:---port 8000 --host 0.0.0.0}
+    ports:
+      - "8001:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  # Named volume that persists the Hugging Face model cache (HF_HOME) so
+  # checkpoints downloaded once survive container recreation.
+  hf_cache:

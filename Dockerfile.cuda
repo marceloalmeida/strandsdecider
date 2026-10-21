@@ -1,0 +1,57 @@
+# Dockerfile.cuda — CUDA-enabled variant for strandsdecider
+#
+# Requires a host with NVIDIA GPUs and the NVIDIA Container Toolkit:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+#
+# Build:
+#   docker build -f Dockerfile.cuda -t strandsdecider:cuda .
+#
+# Run:
+#   docker run --gpus all -p 8000:8000 strandsdecider:cuda
+#
+# docker compose (with the `cuda` profile):
+#   docker compose --profile cuda up -d
+
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/root/.cache/huggingface \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install Python and minimal system deps.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        python3.11 \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
+    && ln -sf /usr/bin/pip3 /usr/local/bin/pip
+
+# Select optional pip extras (e.g. "[vision]") and/or install from git main.
+ARG STRANDS_DECIDER_EXTRAS=""
+ARG STRANDS_DECIDER_GIT=0
+ARG INSTALL_BITSANDBYTES=0
+
+# Install torch with CUDA support (cu121). This pulls the CUDA toolkit wheels
+# (~2-3 GB total), so it's only worthwhile when you actually have a GPU.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cu121 \
+        "torch>=2.7" \
+    && if [ "$INSTALL_BITSANDBYTES" = "1" ]; then \
+        pip install --no-cache-dir bitsandbytes; \
+    fi \
+    && if [ "$STRANDS_DECIDER_GIT" = "1" ]; then \
+        pip install --no-cache-dir "strands-decider @ git+https://github.com/strands-labs/strands-decider${STRANDS_DECIDER_EXTRAS}"; \
+    else \
+        pip install --no-cache-dir "strands-decider${STRANDS_DECIDER_EXTRAS}"; \
+    fi
+
+WORKDIR /app
+
+ENTRYPOINT ["strands-decider"]
+CMD ["serve", "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610", "--port", "8000", "--host", "0.0.0.0"]
+
+EXPOSE 8000
